@@ -1,5 +1,7 @@
 import fs from "fs";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import { fromPath } from "pdf2pic";
+import Tesseract from "tesseract.js";
 
 export const handlePdfUpload = async (req, res) => {
   try {
@@ -9,41 +11,80 @@ export const handlePdfUpload = async (req, res) => {
 
     const filePath = req.file.path;
 
-    // 1) Read file as Uint8Array (required by PDF.js)
+    // Read file as bytes for PDF.js
     const data = new Uint8Array(fs.readFileSync(filePath));
 
-    // 2) Load the PDF
+    // Load PDF
     const pdf = await pdfjsLib.getDocument({ data }).promise;
 
-    let finalText = "";
+    let extractedText = "";
 
-    // 3) Loop through all pages
+    // DIGITAL TEXT EXTRACTION (PDF.js)
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
 
-      // Extract the text
       const pageText = content.items.map(item => item.str).join(" ");
-      finalText += pageText + "\n\n";
+      extractedText += pageText + "\n\n";
     }
 
-    // 4) Ensure extracted folder exists
+    // DETECT SCANNED PDF
+    const isScanned = extractedText.trim().length < 100;
+
+    // ------------------------------------------------------------------------------------
+    // OCR FALLBACK: HANDLE SCANNED PDF (ALL PAGES)
+    // ------------------------------------------------------------------------------------
+    if (isScanned) {
+      console.log("📄 Scanned PDF detected → Running OCR on all pages...");
+
+      let ocrText = "";
+
+      // convert PDF → images
+      const convert = fromPath(filePath, {
+        density: 150,
+        savePath: "./extracted",
+        format: "png",
+        width: 1200,
+        height: 1600,
+      });
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        console.log(`🖼️ Converting page ${i} to PNG...`);
+        const result = await convert(i);
+        const imagePath = result.path;
+
+        console.log(`🔍 Running OCR on page ${i}...`);
+        const { data } = await Tesseract.recognize(imagePath, "eng");
+
+        ocrText += data.text + "\n\n";
+      }
+
+      extractedText = ocrText;
+    }
+
+    // ------------------------------------------------------------------------------------
+    // SAVE FINAL TEXT
+    // ------------------------------------------------------------------------------------
     if (!fs.existsSync("extracted")) {
       fs.mkdirSync("extracted");
     }
 
-    // 5) Save text
     const outputPath = "extracted/full_text.txt";
-    fs.writeFileSync(outputPath, finalText);
+    fs.writeFileSync(outputPath, extractedText);
 
     res.json({
-      message: "PDF extracted successfully via PDF.js",
-      text: finalText,
+      message: isScanned
+        ? "Scanned PDF extracted using OCR"
+        : "Digital PDF extracted using PDF.js",
+      pages: pdf.numPages,
       outputPath,
     });
 
   } catch (error) {
-    console.error("PDF.js extraction error:", error);
-    res.status(500).json({ message: "Server Error", error });
+    console.error("❌ PDF extraction error:", error);
+    res.status(500).json({
+      message: "Server Error during extraction",
+      error: error.toString(),
+    });
   }
 };
