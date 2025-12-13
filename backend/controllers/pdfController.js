@@ -2,9 +2,12 @@ import fs from "fs";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { fromPath } from "pdf2pic";
 import Tesseract from "tesseract.js";
+import { spawn } from "child_process";
+
 
 export const handlePdfUpload = async (req, res) => {
   try {
+    
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
@@ -72,13 +75,8 @@ export const handlePdfUpload = async (req, res) => {
     const outputPath = "extracted/full_text.txt";
     fs.writeFileSync(outputPath, extractedText);
 
-    res.json({
-      message: isScanned
-        ? "Scanned PDF extracted using OCR"
-        : "Digital PDF extracted using PDF.js",
-      pages: pdf.numPages,
-      outputPath,
-    });
+    return runPythonAnalysis(extractedText, res);
+
 
   } catch (error) {
     console.error("❌ PDF extraction error:", error);
@@ -88,3 +86,55 @@ export const handlePdfUpload = async (req, res) => {
     });
   }
 };
+
+
+const runPythonAnalysis = (text, res) => {
+  try {
+      const python = spawn(
+    "../ml_service/venv/Scripts/python.exe",
+    ["../ml_service/run_analysis.py"]
+  );
+
+
+
+
+    let output = "";
+    let errorOutput = "";
+
+    python.stdin.write(text);
+    python.stdin.end();
+
+    python.stdout.on("data", (data) => {
+      output += data.toString();
+    });
+
+    python.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
+
+    python.on("close", () => {
+      if (errorOutput) {
+      console.error("🐍 PYTHON STDERR:\n", errorOutput);
+      return res.status(500).json({
+        error: "Python script error",
+        details: errorOutput,
+      });
+    }
+
+
+      try {
+        const result = JSON.parse(output);
+        return res.json({
+          message: "Document analyzed successfully",
+          results: result,
+        });
+      } catch (e) {
+        return res.status(500).json({ error: "Invalid JSON from Python" });
+      }
+    });
+
+  } catch (err) {
+    return res.status(500).json({ error: err.toString() });
+  }
+};
+

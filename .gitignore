@@ -2,6 +2,13 @@
 backend/uploads/
 
 backend/extracted/
+ml_service/models/clause-classifier/model.safetensors
+ml_service/models/clause-classifier/training_args.bin
+ml_service/venv/
+
+ml_service/models/**/model.safetensors
+ml_service/models/**/pytorch_model.bin
+ml_service/models/**/training_args.bin
 
 # Logs
 
